@@ -40,7 +40,7 @@ jobs:
           SHORT: ${{ steps.ref.outputs.short }}
         run: |
           checksum="$(shasum -a 256 build/TailscaleKit.xcframework.zip | cut -d' ' -f1)"
-          tailscale="$(awk '$1 == "tailscale.com" {print $2}' .build/libtailscale/go.mod)"
+          tailscale="$(awk '$1 == "tailscale.com" {print $2} $1 == "require" && $2 == "tailscale.com" {print $3}' .build/libtailscale/go.mod)"
           {
             echo "TailscaleKit built from [tailscale/libtailscale@${SHORT}](https://github.com/tailscale/libtailscale/commit/${SHA}), tailscale.com ${tailscale}, $(go version | awk '{print $3}'), $(xcodebuild -version | head -n1)."
             echo

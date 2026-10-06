@@ -9,7 +9,7 @@ let tailscaleKit: Target = if let path = ProcessInfo.processInfo.environment["TA
     .binaryTarget(
         name: "TailscaleKit",
         url: "https://github.com/ohwhen/TailnetSession/releases/download/tailscalekit-59d4bb8/TailscaleKit.xcframework.zip",
-        checksum: "0000000000000000000000000000000000000000000000000000000000000000"
+        checksum: "a6c98036b53e4f67aa5cf88e3bd056d620636b7a19993c2d8fc3a2faab0832fb"
     )
 }
 

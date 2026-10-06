@@ -68,6 +68,7 @@ configuration.websiteDataStore = .tailnet(proxy)
 - Netstack, DNS, WireGuard, DERP and the control client stay, and so do `serve` and `acme`, because `tsnet` calls into both.
 - The simulator slice is arm64 only. Both slices share one deployment target.
 - Binaries are stripped. The module ships its `.swiftinterface` only: no compiled `.swiftmodule`, `.abi.json` or source info, so no build-machine paths.
+- The current release is a 14.6 MB zip, and the device binary is 19.4 MB.
 - Each slice carries an empty `PrivacyInfo.xcprivacy`, the same declaration proposed upstream in [libtailscale#57](https://github.com/tailscale/libtailscale/pull/57), and a `LICENSES.txt`.
 
 ## Things that will bite you
