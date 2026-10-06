@@ -1,0 +1,58 @@
+name: Release TailscaleKit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned libtailscale commit
+        id: ref
+        run: |
+          sha="$(tr -d '[:space:]' < tailscale.ref)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: tailscale/libtailscale
+          ref: ${{ steps.ref.outputs.sha }}
+          path: .build/libtailscale
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .build/libtailscale/go.mod
+          cache-dependency-path: .build/libtailscale/go.sum
+
+      - name: Build TailscaleKit.xcframework
+        run: Scripts/build-xcframework.sh 2>&1 | tee build.log
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.ref.outputs.sha }}
+          SHORT: ${{ steps.ref.outputs.short }}
+        run: |
+          checksum="$(shasum -a 256 build/TailscaleKit.xcframework.zip | cut -d' ' -f1)"
+          tailscale="$(awk '$1 == "tailscale.com" {print $2}' .build/libtailscale/go.mod)"
+          {
+            echo "TailscaleKit built from [tailscale/libtailscale@${SHORT}](https://github.com/tailscale/libtailscale/commit/${SHA}), tailscale.com ${tailscale}, $(go version | awk '{print $3}'), $(xcodebuild -version | head -n1)."
+            echo
+            echo '```'
+            sed -n 's/^.*\[tailscalekit\][^ ]* //p' build.log | tail -n 5
+            echo '```'
+            echo
+            echo "SwiftPM checksum: \`${checksum}\`"
+            echo
+            echo "\`LICENSES.txt\`, also inside each framework slice, reproduces the license of every project linked into the binary."
+          } > notes.md
+          gh release create "tailscalekit-${SHORT}" \
+            build/TailscaleKit.xcframework.zip build/LICENSES.txt \
+            --title "TailscaleKit ${SHORT}" \
+            --notes-file notes.md
