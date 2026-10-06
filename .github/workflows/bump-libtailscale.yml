@@ -122,7 +122,7 @@ jobs:
           git switch -c "${BRANCH}"
           git add tailscale.ref
           git commit -m "Bump libtailscale to ${TARGET:0:7}"
-          git push origin "${BRANCH}"
+          git push --force origin "${BRANCH}"
           pr="$(gh pr create --base main --head "${BRANCH}" --title "Bump libtailscale to ${TARGET:0:7}" --body-file pr-body.md)"
           echo "Opened ${pr}"
           gh pr list --state open --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"' |
