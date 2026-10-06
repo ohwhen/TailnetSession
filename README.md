@@ -62,7 +62,7 @@ configuration.websiteDataStore = .tailnet(proxy)
 
 ## The binary
 
-`Scripts/build-xcframework.sh` builds it from the commit in `tailscale.ref`. Run it yourself with Go and Xcode installed; `MIN_IOS=18.0` changes the deployment target.
+`Scripts/build-xcframework.sh` builds it from the commit in `tailscale.ref`, and refuses any commit that isn't on libtailscale's `main`, since GitHub also serves commits from forks by sha. Run it yourself with Go and Xcode installed; `MIN_IOS=18.0` changes the deployment target.
 
 Every day a workflow checks libtailscale's `main`. When it has moved, the workflow builds TailscaleKit from the new commit, runs the package tests on a simulator, and opens a PR that bumps `tailscale.ref`. Merging that PR publishes the binary as a `tailscalekit-<commit>` release, points `Package.swift` at it, installs the package from the release URL to test it again, and tags the next patch version.
 

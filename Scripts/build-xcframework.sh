@@ -31,12 +31,16 @@ for tool in git go xcodebuild xcrun perl strip ditto shasum; do
 done
 [[ "${REF}" =~ ^[0-9a-f]{40}$ ]] || fail "tailscale.ref must hold a full libtailscale commit sha, got '${REF}'"
 
-if [[ -d "${SRC}/.git" ]]; then
-	git -C "${SRC}" fetch --quiet origin
-else
+if [[ ! -d "${SRC}/.git" ]]; then
 	rm -rf "${SRC}"
 	git clone --quiet https://github.com/tailscale/libtailscale.git "${SRC}"
 fi
+git -C "${SRC}" fetch --quiet origin +refs/heads/main:refs/remotes/origin/main
+if [[ -f "$(git -C "${SRC}" rev-parse --absolute-git-dir)/shallow" ]]; then
+	git -C "${SRC}" fetch --quiet --unshallow origin
+fi
+git -C "${SRC}" merge-base --is-ancestor "${REF}" refs/remotes/origin/main \
+	|| fail "${REF} is not on tailscale/libtailscale main; a commit from a fork is reachable by sha but is not upstream code"
 git -C "${SRC}" checkout --quiet --force --detach "${REF}"
 git -C "${SRC}" clean --quiet -fdx
 log "libtailscale ${REF}, iOS ${MIN_IOS}+"
