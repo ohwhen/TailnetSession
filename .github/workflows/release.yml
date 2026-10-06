@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tailscale.ref
+      - Scripts/build-xcframework.sh
+      - Resources/PrivacyInfo.xcprivacy
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read the pinned libtailscale commit
+        id: ref
+        run: echo "sha=$(tr -d '[:space:]' < tailscale.ref)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: tailscale/libtailscale
+          ref: ${{ steps.ref.outputs.sha }}
+          path: .build/libtailscale
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .build/libtailscale/go.mod
+          cache-dependency-path: .build/libtailscale/go.sum
+
+      - name: Build TailscaleKit.xcframework
+        run: Scripts/build-xcframework.sh 2>&1 | tee build.log
+
+      - name: Publish the binary
+        id: binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          tag="tailscalekit-${SHA:0:7}"
+          attempt=2
+          while gh release view "${tag}" >/dev/null 2>&1; do
+            tag="tailscalekit-${SHA:0:7}-${attempt}"
+            attempt=$((attempt + 1))
+          done
+          checksum="$(shasum -a 256 build/TailscaleKit.xcframework.zip | cut -d' ' -f1)"
+          tailscale="$(awk '$1 == "tailscale.com" {print $2} $1 == "require" && $2 == "tailscale.com" {print $3}' .build/libtailscale/go.mod)"
+          {
+            echo "TailscaleKit built from [tailscale/libtailscale@${SHA:0:7}](https://github.com/tailscale/libtailscale/commit/${SHA}), tailscale.com ${tailscale}, $(go version | awk '{print $3}'), $(xcodebuild -version | head -n1)."
+            echo
+            echo '```'
+            sed -n 's/^.*\[tailscalekit\][^ ]* //p' build.log | tail -n 5
+            echo '```'
+            echo
+            echo "SwiftPM checksum: \`${checksum}\`"
+            echo
+            echo "\`LICENSES.txt\`, also inside each framework slice, reproduces the license of every project linked into the binary."
+          } > notes.md
+          gh release create "${tag}" \
+            build/TailscaleKit.xcframework.zip build/LICENSES.txt \
+            --title "TailscaleKit ${tag#tailscalekit-}" \
+            --notes-file notes.md
+          {
+            echo "tag=${tag}"
+            echo "checksum=${checksum}"
+            echo "tailscale=${tailscale}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Point Package.swift at it
+        env:
+          TAG: ${{ steps.binary.outputs.tag }}
+          CHECKSUM: ${{ steps.binary.outputs.checksum }}
+        run: |
+          perl -pi -e "s{releases/download/[^/\"]+/TailscaleKit\.xcframework\.zip}{releases/download/${TAG}/TailscaleKit.xcframework.zip}; s{checksum: \"[0-9a-f]{64}\"}{checksum: \"${CHECKSUM}\"}" Package.swift
+          grep -qF "releases/download/${TAG}/TailscaleKit.xcframework.zip" Package.swift
+          grep -qF "checksum: \"${CHECKSUM}\"" Package.swift
+          git diff Package.swift
+
+      - name: Install the package from the release and test it
+        run: Scripts/test.sh
+
+      - name: Tag the next version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.ref.outputs.sha }}
+          TAG: ${{ steps.binary.outputs.tag }}
+          TAILSCALE: ${{ steps.binary.outputs.tailscale }}
+        run: |
+          last="$(git tag --list '[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+          IFS=. read -r major minor patch <<< "${last:-0.0.0}"
+          next="${major}.${minor}.$((patch + 1))"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Package.swift
+          git commit -m "chore(release): point the package at ${TAG}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          git tag "${next}"
+          git push origin "${next}"
+          gh release create "${next}" --title "${next}" --notes "TailscaleKit from [${TAG}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}): libtailscale [\`${SHA:0:7}\`](https://github.com/tailscale/libtailscale/commit/${SHA}), tailscale.com ${TAILSCALE}."
