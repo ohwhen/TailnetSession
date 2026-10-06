@@ -1,0 +1,133 @@
+name: Bump libtailscale
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: libtailscale commit to move to (defaults to the tip of main)
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-libtailscale
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.compare.outputs.needed }}
+      current: ${{ steps.compare.outputs.current }}
+      target: ${{ steps.compare.outputs.target }}
+      branch: ${{ steps.compare.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare the pin with libtailscale
+        id: compare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.target }}
+        run: |
+          current="$(tr -d '[:space:]' < tailscale.ref)"
+          target="${REQUESTED:-$(git ls-remote https://github.com/tailscale/libtailscale.git refs/heads/main | cut -f1)}"
+          if [[ ! "${target}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::expected a full libtailscale commit sha, got '${target}'"
+            exit 1
+          fi
+          branch="bump/libtailscale-${target:0:7}"
+          {
+            echo "current=${current}"
+            echo "target=${target}"
+            echo "branch=${branch}"
+          } >> "$GITHUB_OUTPUT"
+          if [[ "${target}" == "${current}" ]]; then
+            echo "Pinned to ${current:0:7} already."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$(gh pr list --head "${branch}" --state all --json number --jq '.[].number')" ]]; then
+            echo "A PR for ${target:0:7} already exists."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump:
+    needs: check
+    if: needs.check.outputs.needed == 'true'
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    env:
+      CURRENT: ${{ needs.check.outputs.current }}
+      TARGET: ${{ needs.check.outputs.target }}
+      BRANCH: ${{ needs.check.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: tailscale/libtailscale
+          ref: ${{ needs.check.outputs.target }}
+          path: .build/libtailscale
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .build/libtailscale/go.mod
+          cache-dependency-path: .build/libtailscale/go.sum
+
+      - name: Build TailscaleKit from the new commit
+        run: |
+          echo "${TARGET}" > tailscale.ref
+          Scripts/build-xcframework.sh 2>&1 | tee build.log
+
+      - name: Test the package against it
+        env:
+          TAILSCALEKIT_XCFRAMEWORK: build/TailscaleKit.xcframework
+        run: Scripts/test.sh
+
+      - name: Open the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          upstream=https://github.com/tailscale/libtailscale/commit
+          tailscale_version() {
+            git -C .build/libtailscale show "$1:go.mod" | awk '$1 == "tailscale.com" {print $2} $1 == "require" && $2 == "tailscale.com" {print $3}'
+          }
+          {
+            echo "Moves libtailscale from [\`${CURRENT:0:7}\`](${upstream}/${CURRENT}) to [\`${TARGET:0:7}\`](${upstream}/${TARGET}), tailscale.com $(tailscale_version "${CURRENT}") to $(tailscale_version "${TARGET}")."
+            echo
+            echo "[This run](${RUN_URL}) built TailscaleKit from the new commit and passed the package tests on a simulator. Merging publishes the binary and the next patch version."
+            echo
+            echo '```'
+            sed -n 's/^.*\[tailscalekit\][^ ]* //p' build.log | tail -n 4
+            echo '```'
+            echo
+            echo '<details><summary>Upstream commits</summary>'
+            echo
+            git -C .build/libtailscale log --format="- [\`%h\`](${upstream}/%H) %s" "${CURRENT}..${TARGET}"
+            echo
+            echo '</details>'
+          } > pr-body.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${BRANCH}"
+          git add tailscale.ref
+          git commit -m "Bump libtailscale to ${TARGET:0:7}"
+          git push origin "${BRANCH}"
+          pr="$(gh pr create --base main --head "${BRANCH}" --title "Bump libtailscale to ${TARGET:0:7}" --body-file pr-body.md)"
+          echo "Opened ${pr}"
+          gh pr list --state open --json number,headRefName --jq '.[] | "\(.number) \(.headRefName)"' |
+            while read -r number head; do
+              if [[ "${head}" == bump/libtailscale-* && "${head}" != "${BRANCH}" ]]; then
+                gh pr close "${number}" --delete-branch --comment "Superseded by ${pr}."
+              fi
+            done

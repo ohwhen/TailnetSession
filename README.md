@@ -62,7 +62,9 @@ configuration.websiteDataStore = .tailnet(proxy)
 
 ## The binary
 
-`Scripts/build-xcframework.sh` builds it from the commit in `tailscale.ref`, and the `Release TailscaleKit` workflow publishes it. Run the script yourself with Go and Xcode installed; `MIN_IOS=18.0` changes the deployment target.
+`Scripts/build-xcframework.sh` builds it from the commit in `tailscale.ref`. Run it yourself with Go and Xcode installed; `MIN_IOS=18.0` changes the deployment target.
+
+Every day a workflow checks libtailscale's `main`. When it has moved, the workflow builds TailscaleKit from the new commit, runs the package tests on a simulator, and opens a PR that bumps `tailscale.ref`. Merging that PR publishes the binary as a `tailscalekit-<commit>` release, points `Package.swift` at it, installs the package from the release URL to test it again, and tags the next patch version.
 
 - Go is linked with `-ldflags '-w -s' -trimpath`, and 27 `ts_omit_*` tags drop SSH, Taildrop, Drive, Kubernetes, app connectors, exit-node and route advertising, the relay server, Tailnet Lock, OS routing and DNS managers, and the rest of the daemon and desktop surface.
 - Netstack, DNS, WireGuard, DERP and the control client stay, and so do `serve` and `acme`, because `tsnet` calls into both.
